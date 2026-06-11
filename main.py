@@ -121,17 +121,28 @@ def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename:
                 if current_page == max_pages:
                     break
 
+                pager_numbers = page.query_selector_all(".el-pagination .el-pager li.number")
+                total_pages = 1
+                if pager_numbers:
+                    try:
+                        total_pages = int(pager_numbers[-1].inner_text().strip())
+                    except ValueError:
+                        total_pages = 1
+
+                if current_page >= total_pages:
+                    print(f"[*] Structural EOF: Only {total_pages} page(s) of results for this dork. Moving to next dork.")
+                    break
+
                 next_page_num = current_page + 1
-                next_btn = page.query_selector(f"li.number[aria-label='Halaman {next_page_num}'], li.number[aria-label='Page {next_page_num}']")
-                
+                next_btn = None
+                for li in pager_numbers:
+                    if li.inner_text().strip() == str(next_page_num):
+                        next_btn = li
+                        break
+
                 if next_btn is None:
                     next_btn = page.query_selector(".el-pagination .btn-next")
-                    if next_btn is None:
-                        print("[*] Structural EOF: Controls missing. Moving to next dork.")
-                        break
-                    
-                    btn_class = next_btn.get_attribute("class") or ""
-                    if next_btn.get_attribute("disabled") is not None or "is-disabled" in btn_class:
+                    if next_btn is None or next_btn.is_disabled():
                         print("[*] Structural EOF: End of sheet boundary reached. Moving to next dork.")
                         break
 
@@ -146,7 +157,11 @@ def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename:
                     next_btn.click()
 
                 try:
-                    page.wait_for_selector(f".el-pager li.active:has-text('{next_page_num}')", timeout=15000)
+                    page.wait_for_selector(
+                        f".el-pager li.number.active:has-text('{next_page_num}'), "
+                        f".el-pager li.number.is-active:has-text('{next_page_num}')",
+                        timeout=10000
+                    )
                 except Exception:
                     print("[-] Pagination transition state unverified. Forcing recovery delay...")
                 
