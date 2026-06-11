@@ -1,0 +1,8 @@
+app="Joomla"
+app="Joomla" && country="ID"
+title="Joomla" && country="ID"
+title="- Administration" && country="ID"
+title="Joomla! Administration" && country="ID"
+title="Administrator" && country="ID"
+header="Joomla" && country="ID"
+cert="joomla" && country="ID"
