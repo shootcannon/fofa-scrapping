@@ -29,13 +29,13 @@ def run_browser_scraper(query: str, max_pages: int = 3, output_filename: str = "
         encoded_query = urllib.parse.quote(b64_bytes.decode('utf-8'))
 
         extracted_hosts = set()
-        
+
+        target_url = f"https://fofa.info/result?qbase64={encoded_query}&page=1"
+        print(f"\n[*] Navigating to Dataset Page 1")
+        page.goto(target_url, timeout=45000)
+
         for current_page in range(1, max_pages + 1):
-            target_url = f"https://fofa.info/result?qbase64={encoded_query}&page={current_page}"
-            
-            print(f"\n[*] Navigating to Dataset Page {current_page}")
-            page.goto(target_url, timeout=45000)
-            
+            print(f"\n[*] Processing Dataset Page {current_page}")
             print("[*] Waiting for table rows to render...")
             try:
                 page.wait_for_selector(".main-list-item, .el-table__row, .span-to-wrap", timeout=15000)
@@ -65,11 +65,32 @@ def run_browser_scraper(query: str, max_pages: int = 3, output_filename: str = "
                     extracted_hosts.add(host_text)
                     page_discoveries += 1
             
-            print(f"[+] Page {current_page} parsed. Found {page_discoveries} new target entries.")
-            
-            if "Next" not in html_content and "下一页" not in html_content and 'aria-label="Next page"' not in html_content:
-                print("[*] Structural EOF: End of accessible sheets encountered.")
+            print(f"[+] Page {current_page} parsed. {len(elements)} entries on page, {page_discoveries} new.")
+
+            if current_page == max_pages:
                 break
+
+            next_btn = page.query_selector(".el-pagination .btn-next")
+            if next_btn is None:
+                print("[*] Structural EOF: 'Next page' control not found.")
+                break
+
+            btn_class = next_btn.get_attribute("class") or ""
+            if next_btn.get_attribute("disabled") is not None or "is-disabled" in btn_class:
+                print("[*] Structural EOF: 'Next page' control is disabled.")
+                break
+
+            first_link_before = elements[0].get("href") if elements else None
+
+            print(f"[*] Clicking pagination control -> Page {current_page + 1}")
+            next_btn.click()
+
+            for _ in range(20):
+                time.sleep(0.5)
+                check_el = page.query_selector(".span-to-wrap a, .main-list-item a, .addr-link, a[target='_blank']")
+                first_link_after = check_el.get_attribute("href") if check_el else None
+                if first_link_after and first_link_after != first_link_before:
+                    break
         
         if extracted_hosts:
             with open(output_filename, "w", encoding="utf-8") as f:
