@@ -67,6 +67,12 @@ def run_browser_scraper(query: str, max_pages: int = 3, output_filename: str = "
             
             print(f"[+] Page {current_page} parsed. {len(elements)} entries on page, {page_discoveries} new.")
 
+            pag_el = page.query_selector(".el-pagination")
+            if pag_el:
+                print(f"[debug] pagination block: {pag_el.inner_html()[:600]}")
+            else:
+                print("[debug] .el-pagination not found in DOM")
+
             if current_page == max_pages:
                 break
 
