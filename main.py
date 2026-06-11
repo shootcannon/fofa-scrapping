@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import re
 import random
 import base64
 import urllib.parse
@@ -30,41 +31,85 @@ def get_random_ua():
     ]
     return random.choice(ua_list)
 
+def clean_and_extract_domain(text):
+    if not text:
+        return None
+    text = text.strip().lower()
+    if text.startswith("http://"): text = text[7:]
+    elif text.startswith("https://"): text = text[8:]
+    text = text.split("/")[0].split("?")[0].split(":")[0].strip()
+    
+    domain_match = re.search(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,6}', text)
+    if domain_match:
+        return domain_match.group(0)
+    return None
+
 def process_fofa_page(page, current_page, extracted_hosts):
     try:
-        page.wait_for_selector(".span-to-wrap a, .main-list-item a, .addr-link, a[target='_blank']", timeout=20000)
+        page.wait_for_selector(".main-list-item, .el-table__row, .span-to-wrap", timeout=20000)
     except Exception:
-        print("[-] Timeout waiting for result matrix.")
+        print("[-] Timeout waiting for result matrix container.")
     
-    for _ in range(random.randint(2, 4)):
-        page.evaluate(f"window.scrollBy(0, {random.randint(200, 400)});")
-        time.sleep(random.uniform(0.3, 0.8))
-        
-    time.sleep(random.uniform(4.5, 6.5))
+    print("[*] Simulating human keyboard scroll down...")
+    try:
+        page.focus(".main-list-item, .span-to-wrap, a[target='_blank']")
+    except Exception:
+        pass
+
+    for _ in range(8):
+        page.keyboard.press("PageDown")
+        time.sleep(random.uniform(0.5, 0.9))
+    
+    page.evaluate("""
+        const scrollContainers = [document.querySelector('.el-main'), document.querySelector('.main-list-item')?.parentElement];
+        scrollContainers.forEach(container => {
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+        });
+    """)
+    time.sleep(2)
     
     html_content = page.content()
     soup = BeautifulSoup(html_content, "html.parser")
-    elements = soup.select(".span-to-wrap a, .main-list-item a, .addr-link, a[target='_blank']")
+    
+    containers = soup.select(".main-list-item, .el-table__row, .main-list-item-left, .span-to-wrap")
     
     page_discoveries = 0
-    for el in elements:
-        host_text = el.get_text(strip=True)
-        
-        if not host_text or " " in host_text or len(host_text) < 4 or "." not in host_text:
-            continue
+    
+    for container in containers:
+        links = container.find_all("a")
+        for link in links:
+            href = link.get("href", "")
+            text = link.get_text(strip=True)
             
-        if host_text.startswith("http://"): host_text = host_text[7:]
-        elif host_text.startswith("https://"): host_text = host_text[8:]
-        
-        host_text = host_text.split("/")[0].split("?")[0].strip()
-        
-        if host_text and host_text not in extracted_hosts:
-            print(f"[>] Grabbed: {host_text}")
-            extracted_hosts.add(host_text)
-            page_discoveries += 1
-            
+            if "result?qbase64=" in href or "list?qbase64=" in href:
+                continue
+                
+            target_domain = clean_and_extract_domain(text)
+            if not target_domain:
+                target_domain = clean_and_extract_domain(href)
+                
+            if target_domain and len(target_domain) >= 4:
+                if target_domain not in extracted_hosts and not target_domain.endswith(('fofa.info', 'google.com', 'gstatic.com', 'github.com')):
+                    print(f"[>] Grabbed: {target_domain}")
+                    extracted_hosts.add(target_domain)
+                    page_discoveries += 1
+                    
+    if page_discoveries == 0:
+        all_links = soup.find_all("a", target="_blank")
+        for link in all_links:
+            text = link.get_text(strip=True)
+            href = link.get("href", "")
+            if "fofa" in href or "result?qbase64=" in href:
+                continue
+            target_domain = clean_and_extract_domain(text) or clean_and_extract_domain(href)
+            if target_domain and target_domain not in extracted_hosts:
+                print(f"[>] Grabbed (Fallback Route): {target_domain}")
+                extracted_hosts.add(target_domain)
+                page_discoveries += 1
+
     print(f"[+] Page {current_page} parsed. Unique targets captured this run: {page_discoveries}")
-    return elements
 
 def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename: str = "browser_targets.txt"):
     if not os.path.exists(list_filename):
@@ -121,34 +166,23 @@ def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename:
                 if current_page == max_pages:
                     break
 
-                pager_numbers = page.query_selector_all(".el-pagination .el-pager li.number")
-                total_pages = 1
-                if pager_numbers:
-                    try:
-                        total_pages = int(pager_numbers[-1].inner_text().strip())
-                    except ValueError:
-                        total_pages = 1
-
-                if current_page >= total_pages:
-                    print(f"[*] Structural EOF: Only {total_pages} page(s) of results for this dork. Moving to next dork.")
-                    break
-
                 next_page_num = current_page + 1
-                next_btn = None
-                for li in pager_numbers:
-                    if li.inner_text().strip() == str(next_page_num):
-                        next_btn = li
-                        break
-
+                next_btn = page.query_selector(".el-pager li.active + li.number")
+                
                 if next_btn is None:
                     next_btn = page.query_selector(".el-pagination .btn-next")
-                    if next_btn is None or next_btn.is_disabled():
+                    if next_btn is None:
+                        print("[*] Structural EOF: Controls missing. Moving to next dork.")
+                        break
+                    
+                    btn_class = next_btn.get_attribute("class") or ""
+                    if next_btn.get_attribute("disabled") is not None or "is-disabled" in btn_class:
                         print("[*] Structural EOF: End of sheet boundary reached. Moving to next dork.")
                         break
 
                 print(f"[*] Clicking pagination control -> Page {next_page_num}")
                 next_btn.scroll_into_view_if_needed()
-                time.sleep(random.uniform(0.5, 1.5))
+                time.sleep(random.uniform(0.8, 1.8))
                 
                 box = next_btn.bounding_box()
                 if box:
@@ -157,17 +191,22 @@ def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename:
                     next_btn.click()
 
                 try:
-                    page.wait_for_selector(
-                        f".el-pager li.number.active:has-text('{next_page_num}'), "
-                        f".el-pager li.number.is-active:has-text('{next_page_num}')",
-                        timeout=10000
-                    )
+                    page.wait_for_selector(".el-loading-mask", state="attached", timeout=2000)
+                    page.wait_for_selector(".el-loading-mask", state="detached", timeout=15000)
+                except Exception:
+                    pass
+
+                try:
+                    page.wait_for_selector(f".el-pager li.active", timeout=10000)
+                    active_text = page.locator(".el-pager li.active").first.text_content()
+                    if active_text and str(next_page_num) not in active_text:
+                        time.sleep(3)
                 except Exception:
                     print("[-] Pagination transition state unverified. Forcing recovery delay...")
                 
-                time.sleep(random.uniform(2.5, 4.5))
+                time.sleep(random.uniform(3.5, 5.5))
             
-            time.sleep(random.uniform(5.0, 10.0))
+            time.sleep(random.uniform(6.0, 12.0))
         
         if extracted_hosts:
             with open(output_filename, "w", encoding="utf-8") as f:
