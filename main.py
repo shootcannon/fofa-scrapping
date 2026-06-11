@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright
 if os.name == "nt": os.system("cls")
 else: os.system("clear")
 
-banner = """"
+banner = """
 ______     __       ______       _   
 |  ___|   / _|      | ___ \     | |  
 | |_ ___ | |_ __ _  | |_/ / ___ | |_ 
@@ -116,7 +116,7 @@ def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename:
 
             for current_page in range(1, max_pages + 1):
                 print(f"\n[*] Processing Dataset Page {current_page}")
-                elements = process_fofa_page(page, current_page, extracted_hosts)
+                process_fofa_page(page, current_page, extracted_hosts)
 
                 if current_page == max_pages:
                     break
@@ -135,8 +135,6 @@ def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename:
                         print("[*] Structural EOF: End of sheet boundary reached. Moving to next dork.")
                         break
 
-                initial_set_size = len(extracted_hosts)
-
                 print(f"[*] Clicking pagination control -> Page {next_page_num}")
                 next_btn.scroll_into_view_if_needed()
                 time.sleep(random.uniform(0.5, 1.5))
@@ -147,23 +145,11 @@ def run_browser_scraper(list_filename: str, max_pages: int = 3, output_filename:
                 else:
                     next_btn.click()
 
-                for _ in range(30):
-                    time.sleep(0.5)
-                    check_soup = BeautifulSoup(page.content(), "html.parser")
-                    check_elements = check_soup.select(".span-to-wrap a, .main-list-item a, .addr-link, a[target='_blank']")
-                    
-                    temp_hosts = set(extracted_hosts)
-                    for el in check_elements:
-                        t_text = el.get_text(strip=True)
-                        if t_text.startswith("http://"): t_text = t_text[7:]
-                        elif t_text.startswith("https://"): t_text = t_text[8:]
-                        t_text = t_text.split("/")[0].split("?")[0].strip()
-                        if t_text and "." in t_text:
-                            temp_hosts.add(t_text)
-                    
-                    if len(temp_hosts) > initial_set_size:
-                        break
-                        
+                try:
+                    page.wait_for_selector(f".el-pager li.active:has-text('{next_page_num}')", timeout=15000)
+                except Exception:
+                    print("[-] Pagination transition state unverified. Forcing recovery delay...")
+                
                 time.sleep(random.uniform(2.5, 4.5))
             
             time.sleep(random.uniform(5.0, 10.0))
